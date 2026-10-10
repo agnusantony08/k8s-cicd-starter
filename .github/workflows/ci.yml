@@ -24,6 +24,9 @@ jobs:
 
       - name: Create a test Kubernetes cluster (kind)
         uses: helm/kind-action@v1
+        with:
+          cluster_name: kind
+
 
       - name: Load image and deploy
         run: |
