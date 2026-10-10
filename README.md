@@ -13,7 +13,7 @@ minikube start
 minikube addons enable metrics-server
 eval $(minikube docker-env)          # build inside Minikube's Docker
 docker build -t webapp:local .
-kubectl apply -f k8s/
+kubectl apply -f deployment.yaml -f service.yaml -f hpa.yaml
 minikube service webapp --url        # open the URL in your browser
 ```
 
