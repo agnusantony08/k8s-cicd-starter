@@ -28,7 +28,7 @@ jobs:
       - name: Load image and deploy
         run: |
           kind load docker-image webapp:local
-          kubectl apply -f k8s/deployment.yaml -f k8s/service.yaml
+          kubectl apply -f deployment.yaml -f service.yaml
           kubectl rollout status deployment/webapp --timeout=120s
           kubectl get pods
 
