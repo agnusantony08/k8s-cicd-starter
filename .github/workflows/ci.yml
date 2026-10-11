@@ -5,52 +5,62 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+env:
+  IMAGE: k8s-cicd-starter:ci
+  CLUSTER: ci-cluster
+
 jobs:
-  build-scan-test:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build image
-        run: docker build -t webapp:local .
-
-      - name: Security scan with Trivy (fails on HIGH/CRITICAL)
-        uses: aquasecurity/trivy-action@v0.35.0
+      - uses: actions/setup-python@v5
         with:
-          image-ref: webapp:local
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: "1"
+          python-version: "3.12"
 
-      - name: Create a test Kubernetes cluster (kind)
-        uses: helm/kind-action@v1
-        with:
-          cluster_name: kind
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
 
+      - name: Run tests
+        run: pytest -v
 
-      - name: Load image and deploy
-        run: |
-          kind load docker-image webapp:local
-          kubectl apply -f deployment.yaml -f service.yaml
-          kubectl rollout status deployment/webapp --timeout=120s
-          kubectl get pods
-
-  push-image:
-    needs: build-scan-test
-    if: github.ref == 'refs/heads/main'
+  build-scan-deploy:
+    needs: test
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and push to GitHub Container Registry
+
+      - name: Build Docker image
+        run: docker build -t "$IMAGE" .
+
+      - name: Scan image with Trivy (fail on HIGH/CRITICAL)
         run: |
-          IMAGE=ghcr.io/${{ github.repository_owner }}/k8s-cicd-starter:${{ github.sha }}
-          docker build -t "$IMAGE" .
-          docker push "$IMAGE"
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            ghcr.io/aquasecurity/trivy:0.69.3 \
+            image --severity HIGH,CRITICAL --exit-code 1 \
+            --ignore-unfixed --no-progress "$IMAGE"
+
+      - name: Create temporary kind cluster
+        uses: helm/kind-action@v1.12.0
+        with:
+          cluster_name: ${{ env.CLUSTER }}
+
+      - name: Load image into the cluster
+        run: kind load docker-image "$IMAGE" --name "$CLUSTER"
+
+      - name: Deploy to Kubernetes
+        run: |
+          kubectl apply -f k8s/
+          kubectl rollout status deployment/web --timeout=120s
+          kubectl get pods,svc,hpa
+
+      - name: Smoke test /health
+        run: |
+          kubectl port-forward svc/web 8080:80 &
+          sleep 5
+          curl -fsS http://localhost:8080/health
